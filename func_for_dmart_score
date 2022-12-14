@@ -1,0 +1,897 @@
+import pandas as pd
+import numpy as np
+import time
+from datetime import datetime
+import dask.dataframe as dd
+import gc
+
+def mem_usage(pandas_obj):
+    if isinstance(pandas_obj,pd.DataFrame):
+        usage_b = pandas_obj.memory_usage(deep=True).sum()
+    else: # we assume if not a df it's a series
+        usage_b = pandas_obj.memory_usage(deep=True)
+    usage_mb = usage_b / 1024 ** 2 # convert bytes to megabytes
+    return "{:03.2f} MB".format(usage_mb)
+
+dtype_dmart_for_score={'code': 'object',
+ 'mob': 'float64',
+ 'type_mob': 'float64',
+ 'drchk_flg': 'uint8',
+ 'urzk_flg': 'uint8',
+ 'active_flg': 'uint8',
+ 'is_dc': 'uint8',
+ 'is_ca': 'uint8',
+ 'is_sa': 'uint8',
+ 'is_cc': 'uint8',
+ 'is_mrtg': 'uint8',
+ 'is_cash': 'uint8',
+ 'total_prd_cnt': 'int32',
+ 'tech_churn_flg_0m': 'uint8',
+ 'loan_sum_0m': 'float64',
+ 'pers_sum_0m': 'float64',
+ 'days_to_mrtg': 'int32',
+ 'days_to_cash': 'int32',
+ 'days_to_cc': 'int32',
+ 'days_to_dep': 'int32',
+ 'sum_sa_rur_0m': 'float64',
+ 'sum_sa_cnt_0m': 'int32',
+ 'sum_dep_rur_0m': 'float64',
+ 'sum_dep_cnt_0m': 'int32',
+ 'sum_ca_rur_0m': 'float64',
+ 'sum_ca_cnt_0m': 'int32',
+ 'sum_sum_dc_0m': 'float64',
+ 'sum_cnt_dc_0m': 'int32',
+ 'cash_sum_0m': 'float64',
+ 'cash_cnt_0m': 'int32',
+ 'mrtg_sum_0m': 'float64',
+ 'mrtg_cnt_0m': 'int32',
+ 'cc_sum_0m': 'float64',
+ 'cc_cnt_0m': 'int32',
+ 'loan_diff_0m': 'float64',
+ 'pers_diff_0m': 'float64',
+ 'sum_casa_turnover_rur_0m': 'float64',
+ 'sum_casa_credit_rur_0m': 'float64',
+ 'sum_dc_cash_rur_0m': 'float64',
+ 'sum_dc_pos_rur_0m': 'float64',
+ 'sum_dc_total_rur_0m': 'float64',
+ 'sum_dccashrur_to_dctotalrur_0m': 'float64',
+ 'sum_dc_cash_cnt_0m': 'int32',
+ 'sum_dc_pos_cnt_0m': 'int32',
+ 'sum_dc_total_cnt_0m': 'int32',
+ 'sum_dccash_cntto_dctotal_0m': 'float64',
+ 'sum_dep_cur_cnt_0m': 'int32',
+ 'sum_dep_cur_rur_0m': 'float64',
+ 'sum_cnt_dep_cur_to_rub_0m': 'float64',
+ 'sum_sum_dep_cur_to_rub_0m': 'float64',
+ 'avg_dc_cash_rur_daily_0m': 'float64',
+ 'max_dc_cash_rur_daily_0m': 'float64',
+ 'avg_dc_pos_rur_daily_0m': 'float64',
+ 'max_dc_pos_rur_daily_0m': 'float64',
+ 'avg_dc_total_rur_daily_0m': 'float64',
+ 'max_dc_total_rur_daily_0m': 'float64',
+ 'avg_dc_cash_cnt_daily_0m': 'float64',
+ 'max_dc_cash_cnt_daily_0m': 'int32',
+ 'avg_dc_pos_cnt_daily_0m': 'float64',
+ 'max_dc_pos_cnt_daily_0m': 'int32',
+ 'avg_dc_total_cnt_daily_0m': 'float64',
+ 'max_dc_total_cnt_daily_0m': 'int32',
+ 'avg_sum_casa_turnover_daily_0m': 'float64',
+ 'max_sum_casa_turnover_daily_0m': 'float64',
+ 'channel_sms_0m': 'uint8',
+ 'channel_kc_0m': 'uint8',
+ 'channel_atm_0m': 'uint8',
+ 'channel_dbo_0m': 'uint8',
+ 'cash_crm_flg_0m': 'uint8',
+ 'top_up_crm_flg_0m': 'uint8',
+ 'mrtg_crm_flg_0m': 'uint8',
+ 'cc_crm_flg_0m': 'uint8',
+ 'credit_crm_flg_0m': 'uint8',
+ 'dep_crm_flg_0m': 'uint8',
+ 'dc_crm_flg_0m': 'uint8',
+ 'sa_crm_flg_0m': 'uint8',
+ 'commun_30': 'float64',
+ 'commun_60': 'float64',
+ 'commun_90': 'float64',
+ 'commun_180': 'float64',
+ 'commun_365': 'float64',
+ 'cash_appl_flg_0m': 'uint8',
+ 'top_up_appl_flg_0m': 'uint8',
+ 'cc_appl_flg_0m': 'uint8',
+ 'mrtg_appl_flg_0m': 'uint8',
+ 'appl_rejected_by_bank_flg_0m': 'uint8',
+ 'appl_rejected_by_client_flg_0m': 'uint8',
+ 'appl_approved_flg_0m': 'uint8',
+ 'appl_booked_flg_0m': 'uint8',
+ 'cash_rejected_by_bank_flg_0m': 'uint8',
+ 'cash_rejected_by_client_flg_0m': 'uint8',
+ 'cash_approved_flg_0m': 'uint8',
+ 'cash_booked_flg_0m': 'uint8',
+ 'top_up_rejected_by_bank_flg_0m': 'uint8',
+ 'top_up_rejected_by_client_flg_0m': 'uint8',
+ 'top_up_approved_flg_0m': 'uint8',
+ 'top_up_booked_flg_0m': 'uint8',
+ 'cc_rejected_by_bank_flg_0m': 'uint8',
+ 'cc_rejected_by_client_flg_0m': 'uint8',
+ 'cc_approved_flg_0m': 'uint8',
+ 'cc_booked_flg_0m': 'uint8',
+ 'mrtg_rejected_by_bank_flg_0m': 'uint8',
+ 'mrtg_rejected_by_client_flg_0m': 'uint8',
+ 'mrtg_approved_flg_0m': 'uint8',
+ 'mrtg_booked_flg_0m': 'uint8',
+ 'cash_appl_flg_1y': 'uint8',
+ 'top_up_appl_flg_1y': 'uint8',
+ 'cc_appl_flg_1y': 'uint8',
+ 'mrtg_appl_flg_1y': 'uint8',
+ 'appl_rejected_by_bank_flg_1y': 'uint8',
+ 'appl_rejected_by_client_flg_1y': 'uint8',
+ 'appl_approved_flg_1y': 'uint8',
+ 'appl_booked_flg_1y': 'uint8',
+ 'cash_rejected_by_bank_flg_1y': 'uint8',
+ 'cash_rejected_by_client_flg_1y': 'uint8',
+ 'cash_approved_flg_1y': 'uint8',
+ 'cash_booked_flg_1y': 'uint8',
+ 'top_up_rejected_by_bank_flg_1y': 'uint8',
+ 'top_up_rejected_by_client_flg_1y': 'uint8',
+ 'top_up_approved_flg_1y': 'uint8',
+ 'top_up_booked_flg_1y': 'uint8',
+ 'cc_rejected_by_bank_flg_1y': 'uint8',
+ 'cc_rejected_by_client_flg_1y': 'uint8',
+ 'cc_approved_flg_1y': 'uint8',
+ 'cc_booked_flg_1y': 'uint8',
+ 'mrtg_rejected_by_bank_flg_1y': 'uint8',
+ 'mrtg_rejected_by_client_flg_1y': 'uint8',
+ 'mrtg_approved_flg_1y': 'uint8',
+ 'mrtg_booked_flg_1y': 'uint8',
+ 'total_dbo_trx_cnt_0m': 'int32',
+ 'total_dbo_trx_sum_0m': 'float64',
+ 'dbo_spend_cnt_0m': 'int32',
+ 'dbo_remmit_inhouse_cnt_0m': 'int32',
+ 'dbo_remmit_out_cnt_0m': 'int32',
+ 'dbo_card_cnt_0m': 'int32',
+ 'dbo_credit_cnt_0m': 'int32',
+ 'dbo_deposit_cnt_0m': 'int32',
+ 'dbo_invest_cnt_0m': 'int32',
+ 'dbo_spend_sum_0m': 'float64',
+ 'dbo_remmit_inhouse_sum_0m': 'float64',
+ 'dbo_remmit_out_sum_0m': 'float64',
+ 'dbo_credit_sum_0m': 'float64',
+ 'dbo_deposit_sum_0m': 'float64',
+ 'dbo_invest_sum_0m': 'float64',
+ 'days_to_last_login_dbo': 'float64',
+ 'dbo_profile_flg_0m': 'uint8',
+ 'dbo_profile_flg_1q': 'uint8',
+ 'dbo_profile_flg_2q': 'uint8',
+ 'dbo_profile_flg_3q': 'uint8',
+ 'dbo_profile_flg_4q': 'uint8',
+ 'min_ca_rur_1q': 'float64',
+ 'avg_ca_rur_1q': 'float64',
+ 'max_ca_rur_1q': 'float64',
+ 'min_casa_turnover_rur_1q': 'float64',
+ 'avg_casa_turnover_rur_1q': 'float64',
+ 'max_casa_turnover_rur_1q': 'float64',
+ 'sum_casa_turnover_rur_1q': 'float64',
+ 'min_casa_credit_rur_1q': 'float64',
+ 'avg_casa_credit_rur_1q': 'float64',
+ 'max_casa_credit_rur_1q': 'float64',
+ 'sum_casa_credit_rur_1q': 'float64',
+ 'casa_turnover_avg_to_sum_1q': 'float64',
+ 'casa_turnover_min_to_sum_1q': 'float64',
+ 'casa_turnover_max_to_sum_1q': 'float64',
+ 'min_dc_cash_rur_1q': 'float64',
+ 'avg_dc_cash_rur_1q': 'float64',
+ 'max_dc_cash_rur_1q': 'float64',
+ 'sum_dc_cash_rur_1q': 'float64',
+ 'min_dc_pos_rur_1q': 'float64',
+ 'avg_dc_pos_rur_1q': 'float64',
+ 'max_dc_pos_rur_1q': 'float64',
+ 'sum_dc_pos_rur_1q': 'float64',
+ 'min_dc_total_rur_1q': 'float64',
+ 'avg_dc_total_rur_1q': 'float64',
+ 'max_dc_total_rur_1q': 'float64',
+ 'sum_dc_total_rur_1q': 'float64',
+ 'min_dccashsum_to_dctotalrur_1q': 'float64',
+ 'avg_dccashsum_to_dctotalrur_1q': 'float64',
+ 'max_dccashsum_to_dctotalrur_1q': 'float64',
+ 'sum_dccashsum_to_dctotalrur_1q': 'float64',
+ 'dc_cash_cnt_1q': 'int32',
+ 'dc_pos_cnt_1q': 'int32',
+ 'dc_total_cnt_1q': 'int32',
+ 'dccashcnt_to_dctotalcnt_1q': 'float64',
+ 'min_dc_rur_1q': 'float64',
+ 'avg_dc_rur_1q': 'float64',
+ 'max_dc_rur_1q': 'float64',
+ 'dc_cnt_1q': 'int32',
+ 'min_sa_rur_1q': 'float64',
+ 'avg_sa_rur_1q': 'float64',
+ 'max_sa_rur_1q': 'float64',
+ 'sa_cnt_1q': 'int32',
+ 'cnt_dep_1q': 'int32',
+ 'min_sum_dep_1q': 'float64',
+ 'avg_sum_dep_1q': 'float64',
+ 'max_sum_dep_1q': 'float64',
+ 'min_cash_sum_1q': 'float64',
+ 'avg_cash_sum_1q': 'float64',
+ 'max_cash_sum_1q': 'float64',
+ 'cash_cnt_1q': 'int32',
+ 'min_mrtg_sum_1q': 'float64',
+ 'avg_mrtg_sum_1q': 'float64',
+ 'max_mrtg_sum_1q': 'float64',
+ 'mrtg_cnt_1q': 'int32',
+ 'min_cc_sum_1q': 'float64',
+ 'avg_cc_sum_1q': 'float64',
+ 'max_cc_sum_1q': 'float64',
+ 'cc_cnt_1q': 'int32',
+ 'max_total_prd_cnt_1q': 'int32',
+ 'max_cnt_dep_cur_1q': 'int32',
+ 'min_cnt_dep_cur_to_rur_1q': 'float64',
+ 'max_cnt_dep_cur_to_rur_1q': 'float64',
+ 'min_sum_dep_cur_to_rur_1q': 'float64',
+ 'max_sum_dep_cur_to_rur_1q': 'float64',
+ 'max_cnt_dep_cur_to_rub_1q': 'float64',
+ 'min_sum_dep_cur_1q': 'float64',
+ 'avg_sum_dep_cur_1q': 'float64',
+ 'max_sum_dep_cur_1q': 'float64',
+ 'cnt_dep_cur_1q': 'int32',
+ 'avg_dc_cash_rur_daily_1q': 'float64',
+ 'max_dc_cash_rur_daily_1q': 'float64',
+ 'avg_dc_pos_rur_daily_1q': 'float64',
+ 'max_dc_pos_rur_daily_1q': 'float64',
+ 'avg_dc_total_rur_daily_1q': 'float64',
+ 'max_dc_total_rur_daily_1q': 'float64',
+ 'avg_dc_cash_cnt_daily_1q': 'float64',
+ 'max_dc_cash_cnt_daily_1q': 'int32',
+ 'avg_dc_pos_cnt_daily_1q': 'float64',
+ 'max_dc_pos_cnt_daily_1q': 'int32',
+ 'avg_dc_total_cnt_daily_1q': 'float64',
+ 'max_dc_total_cnt_daily_1q': 'int32',
+ 'avg_sum_casa_turnover_daily_1q': 'float64',
+ 'max_sum_casa_turnover_daily_1q': 'float64',
+ 'tech_churn_flg_1q': 'uint8',
+ 'min_loan_sum_1q': 'float64',
+ 'avg_loan_sum_1q': 'float64',
+ 'max_loan_sum_1q': 'float64',
+ 'max_loan_cnt_1q': 'int32',
+ 'min_pers_sum_1q': 'float64',
+ 'avg_pers_sum_1q': 'float64',
+ 'max_pers_sum_1q': 'float64',
+ 'max_pers_cnt_1q': 'int32',
+ 'min_loan_diff_1q': 'float64',
+ 'avg_loan_diff_1q': 'float64',
+ 'max_loan_diff_1q': 'float64',
+ 'min_pers_diff_1q': 'float64',
+ 'avg_pers_diff_1q': 'float64',
+ 'max_pers_diff_1q': 'float64',
+ 'channel_sms_1q': 'uint8',
+ 'channel_kc_1q': 'uint8',
+ 'channel_atm_1q': 'uint8',
+ 'channel_dbo_1q': 'uint8',
+ 'cash_crm_flg_1q': 'uint8',
+ 'top_up_crm_flg_1q': 'uint8',
+ 'mrtg_crm_flg_1q': 'uint8',
+ 'cc_crm_flg_1q': 'uint8',
+ 'credit_crm_flg_1q': 'uint8',
+ 'dep_crm_flg_1q': 'uint8',
+ 'dc_crm_flg_1q': 'uint8',
+ 'sa_crm_flg_1q': 'uint8',
+ 'total_dbo_trx_cnt_1q': 'int32',
+ 'total_dbo_trx_sum_1q': 'float64',
+ 'dbo_spend_cnt_1q': 'int32',
+ 'dbo_remmit_inhouse_cnt_1q': 'int32',
+ 'dbo_remmit_out_cnt_1q': 'int32',
+ 'dbo_card_cnt_1q': 'int32',
+ 'dbo_credit_cnt_1q': 'int32',
+ 'dbo_deposit_cnt_1q': 'int32',
+ 'dbo_invest_cnt_1q': 'int32',
+ 'dbo_spend_sum_1q': 'float64',
+ 'dbo_remmit_inhouse_sum_1q': 'float64',
+ 'dbo_remmit_out_sum_1q': 'float64',
+ 'dbo_credit_sum_1q': 'float64',
+ 'dbo_deposit_sum_1q': 'float64',
+ 'dbo_invest_sum_1q': 'float64',
+ 'min_ca_rur_2q': 'float64',
+ 'avg_ca_rur_2q': 'float64',
+ 'max_ca_rur_2q': 'float64',
+ 'min_casa_turnover_rur_2q': 'float64',
+ 'avg_casa_turnover_rur_2q': 'float64',
+ 'max_casa_turnover_rur_2q': 'float64',
+ 'sum_casa_turnover_rur_2q': 'float64',
+ 'min_casa_credit_rur_2q': 'float64',
+ 'avg_casa_credit_rur_2q': 'float64',
+ 'max_casa_credit_rur_2q': 'float64',
+ 'sum_casa_credit_rur_2q': 'float64',
+ 'casa_turnover_avg_to_sum_2q': 'float64',
+ 'casa_turnover_min_to_sum_2q': 'float64',
+ 'casa_turnover_max_to_sum_2q': 'float64',
+ 'min_dc_cash_rur_2q': 'float64',
+ 'avg_dc_cash_rur_2q': 'float64',
+ 'max_dc_cash_rur_2q': 'float64',
+ 'sum_dc_cash_rur_2q': 'float64',
+ 'min_dc_pos_rur_2q': 'float64',
+ 'avg_dc_pos_rur_2q': 'float64',
+ 'max_dc_pos_rur_2q': 'float64',
+ 'sum_dc_pos_rur_2q': 'float64',
+ 'min_dc_total_rur_2q': 'float64',
+ 'avg_dc_total_rur_2q': 'float64',
+ 'max_dc_total_rur_2q': 'float64',
+ 'sum_dc_total_rur_2q': 'float64',
+ 'min_dccashsum_to_dctotalrur_2q': 'float64',
+ 'avg_dccashsum_to_dctotalrur_2q': 'float64',
+ 'max_dccashsum_to_dctotalrur_2q': 'float64',
+ 'sum_dccashsum_to_dctotalrur_2q': 'float64',
+ 'dc_cash_cnt_2q': 'int32',
+ 'dc_pos_cnt_2q': 'int32',
+ 'dc_total_cnt_2q': 'int32',
+ 'dccashcnt_to_dctotalcnt_2q': 'float64',
+ 'min_dc_rur_2q': 'float64',
+ 'avg_dc_rur_2q': 'float64',
+ 'max_dc_rur_2q': 'float64',
+ 'dc_cnt_2q': 'int32',
+ 'min_sa_rur_2q': 'float64',
+ 'avg_sa_rur_2q': 'float64',
+ 'max_sa_rur_2q': 'float64',
+ 'sa_cnt_2q': 'int32',
+ 'cnt_dep_2q': 'int32',
+ 'min_sum_dep_2q': 'float64',
+ 'avg_sum_dep_2q': 'float64',
+ 'max_sum_dep_2q': 'float64',
+ 'min_cash_sum_2q': 'float64',
+ 'avg_cash_sum_2q': 'float64',
+ 'max_cash_sum_2q': 'float64',
+ 'cash_cnt_2q': 'int32',
+ 'min_mrtg_sum_2q': 'float64',
+ 'avg_mrtg_sum_2q': 'float64',
+ 'max_mrtg_sum_2q': 'float64',
+ 'mrtg_cnt_2q': 'int32',
+ 'min_cc_sum_2q': 'float64',
+ 'avg_cc_sum_2q': 'float64',
+ 'max_cc_sum_2q': 'float64',
+ 'cc_cnt_2q': 'int32',
+ 'max_total_prd_cnt_2q': 'int32',
+ 'max_cnt_dep_cur_2q': 'int32',
+ 'min_cnt_dep_cur_to_rur_2q': 'float64',
+ 'max_cnt_dep_cur_to_rur_2q': 'float64',
+ 'min_sum_dep_cur_to_rur_2q': 'float64',
+ 'max_sum_dep_cur_to_rur_2q': 'float64',
+ 'max_cnt_dep_cur_to_rub_2q': 'float64',
+ 'min_sum_dep_cur_2q': 'float64',
+ 'avg_sum_dep_cur_2q': 'float64',
+ 'max_sum_dep_cur_2q': 'float64',
+ 'cnt_dep_cur_2q': 'int32',
+ 'avg_dc_cash_rur_daily_2q': 'float64',
+ 'max_dc_cash_rur_daily_2q': 'float64',
+ 'avg_dc_pos_rur_daily_2q': 'float64',
+ 'max_dc_pos_rur_daily_2q': 'float64',
+ 'avg_dc_total_rur_daily_2q': 'float64',
+ 'max_dc_total_rur_daily_2q': 'float64',
+ 'avg_dc_cash_cnt_daily_2q': 'float64',
+ 'max_dc_cash_cnt_daily_2q': 'int32',
+ 'avg_dc_pos_cnt_daily_2q': 'float64',
+ 'max_dc_pos_cnt_daily_2q': 'int32',
+ 'avg_dc_total_cnt_daily_2q': 'float64',
+ 'max_dc_total_cnt_daily_2q': 'int32',
+ 'avg_sum_casa_turnover_daily_2q': 'float64',
+ 'max_sum_casa_turnover_daily_2q': 'float64',
+ 'tech_churn_flg_2q': 'uint8',
+ 'min_loan_sum_2q': 'float64',
+ 'avg_loan_sum_2q': 'float64',
+ 'max_loan_sum_2q': 'float64',
+ 'max_loan_cnt_2q': 'int32',
+ 'min_pers_sum_2q': 'float64',
+ 'avg_pers_sum_2q': 'float64',
+ 'max_pers_sum_2q': 'float64',
+ 'max_pers_cnt_2q': 'int32',
+ 'min_loan_diff_2q': 'float64',
+ 'avg_loan_diff_2q': 'float64',
+ 'max_loan_diff_2q': 'float64',
+ 'min_pers_diff_2q': 'float64',
+ 'avg_pers_diff_2q': 'float64',
+ 'max_pers_diff_2q': 'float64',
+ 'channel_sms_2q': 'uint8',
+ 'channel_kc_2q': 'uint8',
+ 'channel_atm_2q': 'uint8',
+ 'channel_dbo_2q': 'uint8',
+ 'cash_crm_flg_2q': 'uint8',
+ 'top_up_crm_flg_2q': 'uint8',
+ 'mrtg_crm_flg_2q': 'uint8',
+ 'cc_crm_flg_2q': 'uint8',
+ 'credit_crm_flg_2q': 'uint8',
+ 'dep_crm_flg_2q': 'uint8',
+ 'dc_crm_flg_2q': 'uint8',
+ 'sa_crm_flg_2q': 'uint8',
+ 'total_dbo_trx_cnt_2q': 'int32',
+ 'total_dbo_trx_sum_2q': 'float64',
+ 'dbo_spend_cnt_2q': 'int32',
+ 'dbo_remmit_inhouse_cnt_2q': 'int32',
+ 'dbo_remmit_out_cnt_2q': 'int32',
+ 'dbo_card_cnt_2q': 'int32',
+ 'dbo_credit_cnt_2q': 'int32',
+ 'dbo_deposit_cnt_2q': 'int32',
+ 'dbo_invest_cnt_2q': 'int32',
+ 'dbo_spend_sum_2q': 'float64',
+ 'dbo_remmit_inhouse_sum_2q': 'float64',
+ 'dbo_remmit_out_sum_2q': 'float64',
+ 'dbo_credit_sum_2q': 'float64',
+ 'dbo_deposit_sum_2q': 'float64',
+ 'dbo_invest_sum_2q': 'float64',
+ 'min_ca_rur_3q': 'float64',
+ 'avg_ca_rur_3q': 'float64',
+ 'max_ca_rur_3q': 'float64',
+ 'min_casa_turnover_rur_3q': 'float64',
+ 'avg_casa_turnover_rur_3q': 'float64',
+ 'max_casa_turnover_rur_3q': 'float64',
+ 'sum_casa_turnover_rur_3q': 'float64',
+ 'min_casa_credit_rur_3q': 'float64',
+ 'avg_casa_credit_rur_3q': 'float64',
+ 'max_casa_credit_rur_3q': 'float64',
+ 'sum_casa_credit_rur_3q': 'float64',
+ 'casa_turnover_avg_to_sum_3q': 'float64',
+ 'casa_turnover_min_to_sum_3q': 'float64',
+ 'casa_turnover_max_to_sum_3q': 'float64',
+ 'min_dc_cash_rur_3q': 'float64',
+ 'avg_dc_cash_rur_3q': 'float64',
+ 'max_dc_cash_rur_3q': 'float64',
+ 'sum_dc_cash_rur_3q': 'float64',
+ 'min_dc_pos_rur_3q': 'float64',
+ 'avg_dc_pos_rur_3q': 'float64',
+ 'max_dc_pos_rur_3q': 'float64',
+ 'sum_dc_pos_rur_3q': 'float64',
+ 'min_dc_total_rur_3q': 'float64',
+ 'avg_dc_total_rur_3q': 'float64',
+ 'max_dc_total_rur_3q': 'float64',
+ 'sum_dc_total_rur_3q': 'float64',
+ 'min_dccashsum_to_dctotalrur_3q': 'float64',
+ 'avg_dccashsum_to_dctotalrur_3q': 'float64',
+ 'max_dccashsum_to_dctotalrur_3q': 'float64',
+ 'sum_dccashsum_to_dctotalrur_3q': 'float64',
+ 'dc_cash_cnt_3q': 'int32',
+ 'dc_pos_cnt_3q': 'int32',
+ 'dc_total_cnt_3q': 'int32',
+ 'dccashcnt_to_dctotalcnt_3q': 'float64',
+ 'min_dc_rur_3q': 'float64',
+ 'avg_dc_rur_3q': 'float64',
+ 'max_dc_rur_3q': 'float64',
+ 'dc_cnt_3q': 'int32',
+ 'min_sa_rur_3q': 'float64',
+ 'avg_sa_rur_3q': 'float64',
+ 'max_sa_rur_3q': 'float64',
+ 'sa_cnt_3q': 'int32',
+ 'cnt_dep_3q': 'int32',
+ 'min_sum_dep_3q': 'float64',
+ 'avg_sum_dep_3q': 'float64',
+ 'max_sum_dep_3q': 'float64',
+ 'min_cash_sum_3q': 'float64',
+ 'avg_cash_sum_3q': 'float64',
+ 'max_cash_sum_3q': 'float64',
+ 'cash_cnt_3q': 'int32',
+ 'min_mrtg_sum_3q': 'float64',
+ 'avg_mrtg_sum_3q': 'float64',
+ 'max_mrtg_sum_3q': 'float64',
+ 'mrtg_cnt_3q': 'int32',
+ 'min_cc_sum_3q': 'float64',
+ 'avg_cc_sum_3q': 'float64',
+ 'max_cc_sum_3q': 'float64',
+ 'cc_cnt_3q': 'int32',
+ 'max_total_prd_cnt_3q': 'int32',
+ 'max_cnt_dep_cur_3q': 'int32',
+ 'min_cnt_dep_cur_to_rur_3q': 'float64',
+ 'max_cnt_dep_cur_to_rur_3q': 'float64',
+ 'min_sum_dep_cur_to_rur_3q': 'float64',
+ 'max_sum_dep_cur_to_rur_3q': 'float64',
+ 'max_cnt_dep_cur_to_rub_3q': 'float64',
+ 'min_sum_dep_cur_3q': 'float64',
+ 'avg_sum_dep_cur_3q': 'float64',
+ 'max_sum_dep_cur_3q': 'float64',
+ 'cnt_dep_cur_3q': 'int32',
+ 'avg_dc_cash_rur_daily_3q': 'float64',
+ 'max_dc_cash_rur_daily_3q': 'float64',
+ 'avg_dc_pos_rur_daily_3q': 'float64',
+ 'max_dc_pos_rur_daily_3q': 'float64',
+ 'avg_dc_total_rur_daily_3q': 'float64',
+ 'max_dc_total_rur_daily_3q': 'float64',
+ 'avg_dc_cash_cnt_daily_3q': 'float64',
+ 'max_dc_cash_cnt_daily_3q': 'int32',
+ 'avg_dc_pos_cnt_daily_3q': 'float64',
+ 'max_dc_pos_cnt_daily_3q': 'int32',
+ 'avg_dc_total_cnt_daily_3q': 'float64',
+ 'max_dc_total_cnt_daily_3q': 'int32',
+ 'avg_sum_casa_turnover_daily_3q': 'float64',
+ 'max_sum_casa_turnover_daily_3q': 'float64',
+ 'tech_churn_flg_3q': 'uint8',
+ 'min_loan_sum_3q': 'float64',
+ 'avg_loan_sum_3q': 'float64',
+ 'max_loan_sum_3q': 'float64',
+ 'max_loan_cnt_3q': 'int32',
+ 'min_pers_sum_3q': 'float64',
+ 'avg_pers_sum_3q': 'float64',
+ 'max_pers_sum_3q': 'float64',
+ 'max_pers_cnt_3q': 'int32',
+ 'min_loan_diff_3q': 'float64',
+ 'avg_loan_diff_3q': 'float64',
+ 'max_loan_diff_3q': 'float64',
+ 'min_pers_diff_3q': 'float64',
+ 'avg_pers_diff_3q': 'float64',
+ 'max_pers_diff_3q': 'float64',
+ 'channel_sms_3q': 'uint8',
+ 'channel_kc_3q': 'uint8',
+ 'channel_atm_3q': 'uint8',
+ 'channel_dbo_3q': 'uint8',
+ 'cash_crm_flg_3q': 'uint8',
+ 'top_up_crm_flg_3q': 'uint8',
+ 'mrtg_crm_flg_3q': 'uint8',
+ 'cc_crm_flg_3q': 'uint8',
+ 'credit_crm_flg_3q': 'uint8',
+ 'dep_crm_flg_3q': 'uint8',
+ 'dc_crm_flg_3q': 'uint8',
+ 'sa_crm_flg_3q': 'uint8',
+ 'total_dbo_trx_cnt_3q': 'int32',
+ 'total_dbo_trx_sum_3q': 'float64',
+ 'dbo_spend_cnt_3q': 'int32',
+ 'dbo_remmit_inhouse_cnt_3q': 'int32',
+ 'dbo_remmit_out_cnt_3q': 'int32',
+ 'dbo_card_cnt_3q': 'int32',
+ 'dbo_credit_cnt_3q': 'int32',
+ 'dbo_deposit_cnt_3q': 'int32',
+ 'dbo_invest_cnt_3q': 'int32',
+ 'dbo_spend_sum_3q': 'float64',
+ 'dbo_remmit_inhouse_sum_3q': 'float64',
+ 'dbo_remmit_out_sum_3q': 'float64',
+ 'dbo_credit_sum_3q': 'float64',
+ 'dbo_deposit_sum_3q': 'float64',
+ 'dbo_invest_sum_3q': 'float64',
+ 'min_ca_rur_4q': 'float64',
+ 'avg_ca_rur_4q': 'float64',
+ 'max_ca_rur_4q': 'float64',
+ 'min_casa_turnover_rur_4q': 'float64',
+ 'avg_casa_turnover_rur_4q': 'float64',
+ 'max_casa_turnover_rur_4q': 'float64',
+ 'sum_casa_turnover_rur_4q': 'float64',
+ 'min_casa_credit_rur_4q': 'float64',
+ 'avg_casa_credit_rur_4q': 'float64',
+ 'max_casa_credit_rur_4q': 'float64',
+ 'sum_casa_credit_rur_4q': 'float64',
+ 'casa_turnover_avg_to_sum_4q': 'float64',
+ 'casa_turnover_min_to_sum_4q': 'float64',
+ 'casa_turnover_max_to_sum_4q': 'float64',
+ 'min_dc_cash_rur_4q': 'float64',
+ 'avg_dc_cash_rur_4q': 'float64',
+ 'max_dc_cash_rur_4q': 'float64',
+ 'sum_dc_cash_rur_4q': 'float64',
+ 'min_dc_pos_rur_4q': 'float64',
+ 'avg_dc_pos_rur_4q': 'float64',
+ 'max_dc_pos_rur_4q': 'float64',
+ 'sum_dc_pos_rur_4q': 'float64',
+ 'min_dc_total_rur_4q': 'float64',
+ 'avg_dc_total_rur_4q': 'float64',
+ 'max_dc_total_rur_4q': 'float64',
+ 'sum_dc_total_rur_4q': 'float64',
+ 'min_dccashsum_to_dctotalrur_4q': 'float64',
+ 'avg_dccashsum_to_dctotalrur_4q': 'float64',
+ 'max_dccashsum_to_dctotalrur_4q': 'float64',
+ 'sum_dccashsum_to_dctotalrur_4q': 'float64',
+ 'dc_cash_cnt_4q': 'int32',
+ 'dc_pos_cnt_4q': 'int32',
+ 'dc_total_cnt_4q': 'int32',
+ 'dccashcnt_to_dctotalcnt_4q': 'float64',
+ 'min_dc_rur_4q': 'float64',
+ 'avg_dc_rur_4q': 'float64',
+ 'max_dc_rur_4q': 'float64',
+ 'dc_cnt_4q': 'int32',
+ 'min_sa_rur_4q': 'float64',
+ 'avg_sa_rur_4q': 'float64',
+ 'max_sa_rur_4q': 'float64',
+ 'sa_cnt_4q': 'int32',
+ 'cnt_dep_4q': 'int32',
+ 'min_sum_dep_4q': 'float64',
+ 'avg_sum_dep_4q': 'float64',
+ 'max_sum_dep_4q': 'float64',
+ 'min_cash_sum_4q': 'float64',
+ 'avg_cash_sum_4q': 'float64',
+ 'max_cash_sum_4q': 'float64',
+ 'cash_cnt_4q': 'int32',
+ 'min_mrtg_sum_4q': 'float64',
+ 'avg_mrtg_sum_4q': 'float64',
+ 'max_mrtg_sum_4q': 'float64',
+ 'mrtg_cnt_4q': 'int32',
+ 'min_cc_sum_4q': 'float64',
+ 'avg_cc_sum_4q': 'float64',
+ 'max_cc_sum_4q': 'float64',
+ 'cc_cnt_4q': 'int32',
+ 'max_total_prd_cnt_4q': 'int32',
+ 'max_cnt_dep_cur_4q': 'int32',
+ 'min_cnt_dep_cur_to_rur_4q': 'float64',
+ 'max_cnt_dep_cur_to_rur_4q': 'float64',
+ 'min_sum_dep_cur_to_rur_4q': 'float64',
+ 'max_sum_dep_cur_to_rur_4q': 'float64',
+ 'max_cnt_dep_cur_to_rub_4q': 'float64',
+ 'min_sum_dep_cur_4q': 'float64',
+ 'avg_sum_dep_cur_4q': 'float64',
+ 'max_sum_dep_cur_4q': 'float64',
+ 'cnt_dep_cur_4q': 'int32',
+ 'avg_dc_cash_rur_daily_4q': 'float64',
+ 'max_dc_cash_rur_daily_4q': 'float64',
+ 'avg_dc_pos_rur_daily_4q': 'float64',
+ 'max_dc_pos_rur_daily_4q': 'float64',
+ 'avg_dc_total_rur_daily_4q': 'float64',
+ 'max_dc_total_rur_daily_4q': 'float64',
+ 'avg_dc_cash_cnt_daily_4q': 'float64',
+ 'max_dc_cash_cnt_daily_4q': 'int32',
+ 'avg_dc_pos_cnt_daily_4q': 'float64',
+ 'max_dc_pos_cnt_daily_4q': 'int32',
+ 'avg_dc_total_cnt_daily_4q': 'float64',
+ 'max_dc_total_cnt_daily_4q': 'int32',
+ 'avg_sum_casa_turnover_daily_4q': 'float64',
+ 'max_sum_casa_turnover_daily_4q': 'float64',
+ 'tech_churn_flg_4q': 'uint8',
+ 'min_loan_sum_4q': 'float64',
+ 'avg_loan_sum_4q': 'float64',
+ 'max_loan_sum_4q': 'float64',
+ 'max_loan_cnt_4q': 'int32',
+ 'min_pers_sum_4q': 'float64',
+ 'avg_pers_sum_4q': 'float64',
+ 'max_pers_sum_4q': 'float64',
+ 'max_pers_cnt_4q': 'int32',
+ 'min_loan_diff_4q': 'float64',
+ 'avg_loan_diff_4q': 'float64',
+ 'max_loan_diff_4q': 'float64',
+ 'min_pers_diff_4q': 'float64',
+ 'avg_pers_diff_4q': 'float64',
+ 'max_pers_diff_4q': 'float64',
+ 'channel_sms_4q': 'uint8',
+ 'channel_kc_4q': 'uint8',
+ 'channel_atm_4q': 'uint8',
+ 'channel_dbo_4q': 'uint8',
+ 'cash_crm_flg_4q': 'uint8',
+ 'top_up_crm_flg_4q': 'uint8',
+ 'mrtg_crm_flg_4q': 'uint8',
+ 'cc_crm_flg_4q': 'uint8',
+ 'credit_crm_flg_4q': 'uint8',
+ 'dep_crm_flg_4q': 'uint8',
+ 'dc_crm_flg_4q': 'uint8',
+ 'sa_crm_flg_4q': 'uint8',
+ 'total_dbo_trx_cnt_4q': 'int32',
+ 'total_dbo_trx_sum_4q': 'float64',
+ 'dbo_spend_cnt_4q': 'int32',
+ 'dbo_remmit_inhouse_cnt_4q': 'int32',
+ 'dbo_remmit_out_cnt_4q': 'int32',
+ 'dbo_card_cnt_4q': 'int32',
+ 'dbo_credit_cnt_4q': 'int32',
+ 'dbo_deposit_cnt_4q': 'int32',
+ 'dbo_invest_cnt_4q': 'int32',
+ 'dbo_spend_sum_4q': 'float64',
+ 'dbo_remmit_inhouse_sum_4q': 'float64',
+ 'dbo_remmit_out_sum_4q': 'float64',
+ 'dbo_credit_sum_4q': 'float64',
+ 'dbo_deposit_sum_4q': 'float64',
+ 'dbo_invest_sum_4q': 'float64',
+ 'sum_sum_dep_cur_1_3': 'float64',
+ 'sum_sum_dep_cur_4_6': 'float64',
+ 'sum_sum_dep_cur_6_9': 'float64',
+ 'sum_sum_dep_cur_9_12': 'float64',
+ 'gender_m_flg': 'uint8',
+ 'pensioners_flg': 'uint8',
+ 'apk_flg': 'uint8',
+ 'email_flg': 'uint8',
+ 'zp_card_flg': 'uint8',
+ 'income_zp_pens_cr': 'float64',
+ 'guarantee_debts': 'float64',
+ 'co_borrower_debts': 'float64',
+ 'other_card_active_flg': 'uint8',
+ 'cr_to_pers_money_ratio': 'float64',
+ 'zp_1_mnth': 'float64',
+ 'zp_3_mnth': 'float64',
+ 'zp_6_mnth': 'float64',
+ 'age': 'float64'}
+
+list_not_int_dmart_for_score = ['avg_dc_cash_cnt_daily_0m',  'avg_dc_pos_cnt_daily_0m',  'avg_dc_total_cnt_daily_0m',  'avg_dc_cash_cnt_daily_1q',
+                'avg_dc_pos_cnt_daily_1q', 'avg_dc_total_cnt_daily_1q', 'avg_dc_cash_cnt_daily_2q', 'avg_dc_pos_cnt_daily_2q',
+                'avg_dc_total_cnt_daily_2q', 'avg_dc_cash_cnt_daily_3q', 'avg_dc_pos_cnt_daily_3q', 'avg_dc_total_cnt_daily_3q',
+                'avg_dc_cash_cnt_daily_4q', 'avg_dc_pos_cnt_daily_4q', 'avg_dc_total_cnt_daily_4q',
+                'sum_dccash_cntto_dctotal_0m', 'sum_cnt_dep_cur_to_rub_0m', 'dccashcnt_to_dctotalcnt_1q', 'min_cnt_dep_cur_to_rur_1q',
+                'max_cnt_dep_cur_to_rur_1q', 'max_cnt_dep_cur_to_rub_1q', 'dccashcnt_to_dctotalcnt_2q', 'min_cnt_dep_cur_to_rur_2q',
+                'max_cnt_dep_cur_to_rur_2q', 'max_cnt_dep_cur_to_rub_2q', 'dccashcnt_to_dctotalcnt_3q', 'min_cnt_dep_cur_to_rur_3q'
+                'max_cnt_dep_cur_to_rur_3q', 'max_cnt_dep_cur_to_rub_3q', 'dccashcnt_to_dctotalcnt_4q', 'min_cnt_dep_cur_to_rur_4q',
+                'max_cnt_dep_cur_to_rur_4q', 'max_cnt_dep_cur_to_rub_4q']
+
+
+def make_pandas_df(name_file : str, start_column : int, end_column : str, dtype : dict, step_number: int, 
+                   list_not_int : list, df_target: pd.DataFrame = None, nrows: int = 0) -> pd.DataFrame:
+    """
+     Функция для поколоночного чтения большого csv файла и преобразования его в датафрейм pandas
+     name_file - название файла
+     start_column - номер колонки в файле, с которого начинается датафрейм. Начальная нумерация начинается с 0
+     end_column - номер колонки, до которого считываются данные. Не включается в датафрейм!
+     dtype - тип колонок в файле. Указывается для ускорения загрузки.
+     step_number - номер шага. Нумерация должна начинаться с 1
+     df_target - датафрейм с таргетами. Если не None, то на первом шаге делается left join исходного датафрейма с таргетом для ускорения
+                 процесса. Если делать left join после обработки всего csv файла, то процесс занимает значительно больше времени.
+     list_not_int - список колонок, которые не нужно приводить к целому типу
+     nrows - если > 0, то кол-во строк, которое нужно оставить в конечном датафрайме. Используется для отладки
+    """
+    print(f'\033[1mШаг: {step_number}\033[0m')
+    #!cat /proc/meminfo | grep Mem
+    df_tmp = dd.read_csv(name_file, usecols=list(range(start_column, end_column)), dtype=dtype, assume_missing=True)
+    df_tmp = df_tmp.rename(columns=lambda col: col.lower())
+    df_score2 = df_tmp.compute(dt=1) #dtypes=df_tmp.dtypes
+    print(f'Кол-во записей в датафрейме: {len(df_score2)}, размер датафрейма:{mem_usage(df_score2)}')
+    print(f'Текущее время: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+    print(df_score2.info(memory_usage='deep', verbose=False))
+    print('Переиндексация')
+    df_score2.reset_index(inplace=True, drop=True) #Индекс почему-то неправильный
+    if (step_number == 1) and (df_target is not None):
+        # На первом шаге делаем left join с df_target
+        start_time = datetime.now()
+        print(f'Начинаю left join с таргетом, тек.время: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+        df_score2 = df_score2.merge(df_target, on='code', how='left')
+        end_time = datetime.now()
+        print(f'Закончил left join. Общее время операции: {end_time - start_time}')
+        gc.collect()
+        df_score2.loc[pd.isnull(df_score2.target), 'target'] = 0
+        df_score2['target'] = df_score2['target'].astype('uint8')
+        print(f'Кол-во таргетов {len(df_score2[df_score2.target>0])}')
+        col_tmp = ['code', 'target'] + df_score2.columns[1:-1].to_list()
+        #Меняю прорядок полей, чтобы видеть target
+        df_score2 = pd.DataFrame(df_score2, columns=col_tmp)
+        #print(df_score2.head(10))
+                
+    if nrows>0:
+        print(f'Режем датафрейм до {nrows} строк')
+        #Режем по кол-ву строк для теста
+        df_score2 = df_score2.loc[df_score2.index < nrows]
+        
+    print(df_score2.info(memory_usage='deep', verbose=False))
+    print('Меняю типы полей, этап 1')
+    count_all_cols=len(df_score2.columns)
+    print(f'Всего колонок: {count_all_cols}')
+    col_num = 0
+    count_change = 0
+    start_time = datetime.now()
+    for col in df_score2.columns:
+        if 'flg' in col or col == 'is_dc' or col == 'is_ca' or col =='is_sa' \
+        or col == 'is_cc' or col == 'is_mrtg' or col =='is_cash' or 'channel_' in col:
+            df_score2[col] = df_score2[col].astype('uint8')
+            count_change += 1
+        elif (col not in list_not_int) and \
+             ('cnt' in col or col == 'days_to_mrtg' or col == 'days_to_cash' or col == 'days_to_cc' or col == 'days_to_dep'):
+            df_score2[col] = df_score2[col].astype('uint16')
+            count_change += 1
+        col_num += 1
+        print(f'Обработано колонок: {col_num}', end='\r')
+    print()
+    print(f'Изменено типов колонок: {count_change}')
+    end_time = datetime.now()
+    print(f'Общее время операции: {end_time - start_time}')
+    print(df_score2.info(memory_usage='deep', verbose=False))
+    gc.collect()
+    #!cat /proc/meminfo | grep Mem
+    print('Заполняю пустые значения')
+    df_score2.fillna(-1, inplace=True)
+    print('Меняю типы полей, этап 2')
+    df_score2[df_score2.select_dtypes(np.float64).columns] = df_score2.select_dtypes(np.float64).astype(np.float32)
+    print(df_score2.info(memory_usage='deep', verbose=False))
+    # del df_tmp # проверка
+    # gc.collect()
+    #!cat /proc/meminfo | grep Mem
+    print(f'Текущее время: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+    return df_score2
+
+
+def read_big_csv(name_csv: str, list_range_columns: list, dtype_dmart_for_score: dict, 
+                 list_not_int_dmart_for_score: list, df_target: pd.DataFrame = None, nrows: int = 0)-> pd.DataFrame:
+    """
+    Функция для чтения большого csv файла.
+    На вход подается название csv файла, список с номерами колонок файла, типы колонок,
+    список колонок, которых не нужно приводить к типу int,
+    pandas дата фрейм с таргетом и параметр nrows, используемый для теста.
+    Файл читается поколоночно, на каждом шаге читается часть колонок, задаваемых в list_range_columns
+    Если df_target задан, то с исходным датафреймом происходит left join по полю code.
+    Функция возвращает pandas дата фрейм
+    """
+    # Создаем пустой датафрейм, с которым будет объединять части файла
+    df_score = pd.DataFrame()
+    #Пример правильного list_range_columns
+    #Читаются колонки с первого элемента кортежа до второго, не включая второй
+    #list_num_columns = [(0, 100), (100, 200), (200, 300), (300, 400), (400, 500), (500, 550), (550, 600), (600, 640), (640, 667)]
+    global_start_time = datetime.now()
+    print(f'Начинаю работу, тек.время: {global_start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+    n_step = 1
+    for lnc in list_range_columns:
+        df_score = pd.concat([df_score, make_pandas_df(name_csv, lnc[0], lnc[1], dtype_dmart_for_score, n_step,  
+                                                       list_not_int_dmart_for_score, df_target)], axis=1)
+        print(f'\033[1m Информация о df_score на шаге {n_step}:\033[0m')
+        print(df_score.info(memory_usage='deep', verbose=False))
+        global_end_time = datetime.now()
+        print(f'Общее время работы процесса: {global_end_time - global_start_time}')
+        n_step += 1  
+    gc.collect()     
+    return df_score
+
+def read_big_csv_imp_columns(name_csv: str, list_name_imp_columns: list, dtype_dmart_for_score: dict, 
+                 list_not_int: list, df_target: pd.DataFrame = None)-> pd.DataFrame:
+    """
+    Функция для чтения большого csv файла.
+    На вход подается название csv файла, список с названиями колонок файла, типы колонок,
+    список колонок, которых не нужно приводить к типу int, pandas дата фрейм с таргетом.
+    Читаются только колонки, имена которых заданы в list_name_imp_columns
+    Если df_target задан, то с исходным датафреймом происходит left join по полю code.
+    Поле code должно быть в списке list_name_imp_columns.
+    Функция возвращает pandas дата фрейм
+    """
+    df_score2 = pd.DataFrame()
+    global_start_time = datetime.now()
+    print(f'Начинаю работу, тек.время: {global_start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+    df_tmp = dd.read_csv(name_csv, dtype=dtype_dmart_for_score, assume_missing=True)
+    df_tmp = df_tmp.rename(columns=lambda col: col.lower())
+    #Формируем список с номерами нужных колонок
+    list_num_imp_col = [df_tmp.columns.get_loc(c) for c in df_tmp.columns if c in list_name_imp_columns]
+    #print(list_num_imp_col)
+    #print(len(list_num_imp_col))
+    df_tmp = dd.read_csv(name_csv, usecols=list_num_imp_col, dtype=dtype_dmart_for_score, assume_missing=True)
+    df_tmp = df_tmp.rename(columns=lambda col: col.lower())
+    df_score2 = df_tmp.compute(dt=1) #dtypes=df_tmp.dtypes
+    print(f'Кол-во записей в датафрейме: {len(df_score2)}, размер датафрейма:{mem_usage(df_score2)}')
+    print(f'Текущее время: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+    print(df_score2.info(memory_usage='deep', verbose=False))
+    print('Переиндексация')
+    df_score2.reset_index(inplace=True, drop=True)
+    #Внимание! Порядок полей важен! Поэтому меняем порядок в соответствии с list_name_imp_columns
+    df_score2 = pd.DataFrame(df_score2, columns=list_name_imp_columns)
+    gc.collect()
+    
+    if df_target is not None:
+        # Если задан df_target, то делаем left join с df_target
+        start_time = datetime.now()
+        print(f'Начинаю left join с таргетом, тек.время: {start_time.strftime("%Y-%m-%d %H:%M:%S")}')
+        df_score2 = df_score2.merge(df_target, on='code', how='left')
+        end_time = datetime.now()
+        print(f'Закончил left join. Общее время операции: {end_time - start_time}')
+        gc.collect()
+        df_score2.loc[pd.isnull(df_score2.target), 'target'] = 0
+        df_score2['target'] = df_score2['target'].astype('uint8')
+        print(f'Кол-во таргетов {len(df_score2[df_score2.target>0])}')
+        col_tmp = ['code', 'target'] + df_score2.columns[1:-1].to_list()
+        #Меняю прорядок полей, чтобы видеть target
+        df_score2 = pd.DataFrame(df_score2, columns=col_tmp)
+        #print(df_score2.head(10))
+    
+    print('Меняю типы полей, этап 1')
+    count_all_cols=len(df_score2.columns)
+    print(f'Всего колонок: {count_all_cols}')
+    col_num = 0
+    count_change = 0
+    start_time = datetime.now()
+    for col in df_score2.columns:
+        if 'flg' in col or col == 'is_dc' or col == 'is_ca' or col =='is_sa' \
+        or col == 'is_cc' or col == 'is_mrtg' or col =='is_cash' or 'channel_' in col:
+            df_score2[col] = df_score2[col].astype('uint8')
+            count_change += 1
+        elif (col not in list_not_int) and \
+             ('cnt' in col or col == 'days_to_mrtg' or col == 'days_to_cash' or col == 'days_to_cc' or col == 'days_to_dep'):
+            df_score2[col] = df_score2[col].astype('uint16')
+            count_change += 1
+        col_num += 1
+        print(f'Обработано колонок: {col_num}', end='\r')
+    
+    print()
+    print(f'Изменено типов колонок: {count_change}')
+    end_time = datetime.now()
+    print(f'Общее время операции: {end_time - start_time}')
+    print(df_score2.info(memory_usage='deep', verbose=False))
+    gc.collect()
+    
+    print('Заполняю пустые значения')
+    df_score2.fillna(-1, inplace=True)
+    print('Меняю типы полей, этап 2')
+    df_score2[df_score2.select_dtypes(np.float64).columns] = df_score2.select_dtypes(np.float64).astype(np.float32)
+    
+    print(df_score2.info(memory_usage='deep', verbose=False))
+    global_end_time = datetime.now()
+    print(f'Общее время работы процесса: {global_end_time - global_start_time}')
+    
+    gc.collect()     
+    return df_score2
+
+def main():
+    pass    
+
+if __name__ == '__main__':
+    main()
